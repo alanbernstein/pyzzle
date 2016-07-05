@@ -61,7 +61,7 @@ class ParamSet(object):
         self.__setattr__(paramname, param)
 
 
-def get_default_paramset():
+def get_default_nub_parameters():
     # TODO: make these look better
     pset = ParamSet([Param('pos', 0.5, .4, .6),
                      Param('height', 0.25, .2, 0.3),
@@ -119,12 +119,14 @@ class SquareTiledPuzzle(Puzzle):
                  puzzle_dim=None,
                  paramset=None,
                  cut_type=None,
-                 edge_type=None):
+                 edge_type=None,
+                 nub_parameters=None):
         self.piece_dim = piece_dim or [1, 1]    # in measurement units
         self.puzzle_dim = puzzle_dim or [4, 6]  # in puzzle pieces
         self.paramset = paramset or get_default_paramset()
         self.cut_type = cut_type or 'straight'
         self.edge_type = edge_type or 'random'
+        self.nub_parameters = nub_parameters or get_default_nub_parameters()
         self.generate()
 
     def generate(self):
@@ -162,18 +164,19 @@ class SquareTiledPuzzle(Puzzle):
 # - piece_size -> list gives full spacing control
 # in that case, why not use a function?
 class PuzzleCut(object):
-    def __init__(self, num_pieces=1, piece_size=1, cut_type=None):
+    def __init__(self, num_pieces=1, piece_size=1, cut_type=None, nub_parameters=None):
         self.num_pieces = num_pieces
         self.piece_size = piece_size
         self.cut_type = cut_type or 'straight'
+        self.nub_parameters = nub_parameters or get_default_nub_parameters()
         self.generate()
 
     def generate(self):
-        pset = get_default_paramset()
+        pset = get_default_nub_parameters()
         xy = []
         for n in range(self.num_pieces):
-            pset.randomize()
-            xy0, _ = create_puzzle_piece_edge(pset)
+            self.nub_parameters.randomize()
+            xy0, _ = create_puzzle_piece_edge(self.nub_parameters)
             xy0 *= self.piece_size
             xy0[:, 0] += self.piece_size * n
             xy0[:, 1] *= random_sign()
@@ -317,7 +320,7 @@ def create_curved_cut(base_curve, t, num_pieces, pts_per_segment):
     # TODO: reparameterize the curve on arclength
     T, N, B = frenet_frame(base_curve)
     pieces = []
-    pset = get_default_paramset()
+    pset = get_default_nub_parameters()
     pts_per_piece = pts_per_segment * SEGMENTS_PER_PIECE
 
     tt = np.linspace(0, 1, pts_per_piece + 1)
@@ -359,7 +362,7 @@ def create_spiral_cut():
 def create_puzzle_cut_straight(num_pieces):
     """generate a cut on a straight baseline, with multiple edges"""
     # return xy of horizontal cut
-    pset = get_default_paramset()
+    pset = get_default_nub_parameters()
     xy = []
     for n in range(num_pieces):
         pset.randomize()
@@ -374,7 +377,7 @@ def create_puzzle_cut_straight(num_pieces):
 def plot_square_piece_simple():
     """simple demo - makes more sense for a 'cut' to be the next
     level of abstraction after an 'edge'"""
-    pset = get_default_paramset()
+    pset = get_default_nub_parameters()
     pset.randomize()
     bxy, _ = create_puzzle_piece_edge(pset)
     pset.randomize()
@@ -409,7 +412,7 @@ def plot_edge_interactive():
     """plot a puzzle piece edge, with slider widgets for each of the
     control parameters. useful for tweaking the parameter distributions"""
     # initialize paramset and data
-    pset = get_default_paramset()
+    pset = get_default_nub_parameters()
     pset.randomize()
     xy, knots = create_puzzle_piece_edge(pset)
 
