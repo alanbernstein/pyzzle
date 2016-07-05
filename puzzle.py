@@ -35,7 +35,13 @@ class ParamSet(object):
     pset.paramname.val                              # get value (known name)
     pset.paramname.min                              # get min bound
     pset.set_param(paramname, val)                    # set val of parameter, programmatically (unknown name)
+    this interface allows looping over the set of parameter members,
+    which greatly simplifies the interactive plot.
     """
+    # TODO: rewrite this as ParameterDistribution,
+    # with method sample(), that does the same thing as randomize() here,
+    # but returns a random sample rather than setting
+    # not sure if that would work for the interactive plot, have to think about it
     def __init__(self, paramlist):
         for param in paramlist:
             self.__setattr__(param.name, param)
@@ -90,6 +96,7 @@ class Puzzle(object):
         self.perimeter = []
 
     def plot(self, **kwargs):
+        # caller is responsible for plt.show() etc
         ph = []
         for cut in self.cuts:
             ph.append(plt.plot(cut[:, 0], cut[:, 1], **kwargs))
@@ -115,37 +122,39 @@ class Puzzle(object):
 
 # TODO: these
 class SquareTiledPuzzle(Puzzle):
-    def __init__(self, piece_dim=None,
+    def __init__(self,
+                 piece_dim=None,
                  puzzle_dim=None,
-                 paramset=None,
                  cut_type=None,
-                 edge_type=None,
+                 edge_orientation=None,
                  nub_parameters=None):
         self.piece_dim = piece_dim or [1, 1]    # in measurement units
         self.puzzle_dim = puzzle_dim or [4, 6]  # in puzzle pieces
-        self.paramset = paramset or get_default_paramset()
         self.cut_type = cut_type or 'straight'
-        self.edge_type = edge_type or 'random'
+        self.edge_orientation = edge_orientation or 'random'
         self.nub_parameters = nub_parameters or get_default_nub_parameters()
         self.generate()
 
     def generate(self):
         self.cuts = []
+        cutter = PuzzleCutter(num_pieces=self.puzzle_dim[0],
+                              piece_size=self.piece_dim[0],
+                              cut_type=self.cut_type,
+                              edge_orientation=self.edge_orientation)
+
         for n in range(1, self.puzzle_dim[1]):
             # horizontal cuts run left-right, stack up-down
-            cut = PuzzleCut(num_pieces=self.puzzle_dim[0],
-                            piece_size=self.piece_dim[0],
-                            cut_type=self.cut_type)
-            hcut = cut.points + np.array([0, n])
+            cut = cutter.generate()
+            hcut = cut + np.array([0, n])
             self.cuts.append(hcut)
 
+        cutter.num_pieces = self.puzzle_dim[1]
+        cutter.piece_sizes = self.piece_dim[1]
         for n in range(1, self.puzzle_dim[0]):
             # vertical cuts run up-down, stack left-right
-            cut = PuzzleCut(num_pieces=self.puzzle_dim[1],
-                            piece_size=self.piece_dim[1],
-                            cut_type=self.cut_type)
-            vcut = np.fliplr(cut.points) + np.array([n, 0])
-            self.cuts.append(np.fliplr(vcut))
+            cut = cutter.generate()
+            vcut = np.fliplr(cut) + np.array([n, 0])
+            self.cuts.append(vcut)
 
         unit_square = np.array([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]])
         self.perimeter = unit_square * self.piece_dim * self.puzzle_dim
@@ -163,38 +172,63 @@ class SquareTiledPuzzle(Puzzle):
 # - cut_path -> straight line if not supplide
 # - piece_size -> list gives full spacing control
 # in that case, why not use a function?
-class PuzzleCut(object):
-    def __init__(self, num_pieces=1, piece_size=1, cut_type=None, nub_parameters=None):
+class PuzzleCutter(object):
+    """Generates a single 'puzzle cut'
+    by default:
+    - cut is straight, and along the x-axis
+    - length = num_pieces * piece_size"""
+    def __init__(self,
+                 num_pieces=1,
+                 piece_size=1,
+                 cut_type=None,
+                 edge_orientation=None,
+                 nub_parameters=None):
         self.num_pieces = num_pieces
         self.piece_size = piece_size
         self.cut_type = cut_type or 'straight'
+        self.edge_orientation = edge_orientation or 'random'
         self.nub_parameters = nub_parameters or get_default_nub_parameters()
         self.generate()
 
     def generate(self):
-        pset = get_default_nub_parameters()
         xy = []
         for n in range(self.num_pieces):
             self.nub_parameters.randomize()
             xy0, _ = create_puzzle_piece_edge(self.nub_parameters)
             xy0 *= self.piece_size
             xy0[:, 0] += self.piece_size * n
-            xy0[:, 1] *= random_sign()
+            if self.edge_orientation == 'random':
+                xy0[:, 1] *= random_sign()
+            elif self.edge_orientation == 'alternating':
+                xy0[:, 1] *= (-1) ** n
             xy.append(xy0)
 
         self.points = np.vstack(xy)
+        return self.points
 
 
 def main():
     # plot_edge_simple()
-    plot_edge_interactive()
+    # plot_edge_interactive()
     # plot_square_piece_simple()
     # plot_grid_puzzle()
     # plot_curvy_grid_puzzle()
     # draw_svg_curvy_grid_puzzle()
 
+    plot_grid_puzzle_refactored()
+
 
 random_sign = lambda: random.choice([1, -1])
+
+
+def plot_grid_puzzle_refactored():
+    cols, rows = 6, 4
+    puzz = SquareTiledPuzzle(puzzle_dim=(cols, rows))
+    fig = plt.figure()
+    fig.add_subplot(111, aspect='equal')
+    puzz.plot(color='k')
+    plt.axis([-.1, cols + .1, -.1, rows + .1])
+    plt.show()
 
 
 def plot_grid_puzzle(rows=4, cols=6):
@@ -209,7 +243,7 @@ def plot_grid_puzzle(rows=4, cols=6):
         plt.plot(vcut[:, 1] + n, vcut[:, 0], 'k-')
 
     plt.plot([0, cols, cols, 0, 0], [0, 0, rows, rows, 0], 'k-')
-    plt.axis([-.5, cols+.5, -.5, rows+.5])
+    plt.axis([-.5, cols + .5, -.5, rows + .5])
     plt.show()
 
 
@@ -341,7 +375,7 @@ def create_curved_cut(base_curve, t, num_pieces, pts_per_segment):
         # to the straight segment of the null_base_curve - the parameter moves faster
         # on the edge
         start = pts_per_piece * n
-        end = pts_per_piece * (n+1) + 1
+        end = pts_per_piece * (n + 1) + 1
         base_segment = base_curve[start:end]
         T_segment = T[start:end]
         N_segment = N[start:end]
@@ -352,13 +386,15 @@ def create_curved_cut(base_curve, t, num_pieces, pts_per_segment):
     return np.vstack(xy), np.vstack(straights)
 
 
-def create_spiral_cut():
-    r = 1 + 2 * t
+def archimedean_spiral(t):
+    # use as base for spiral puzzle cut
+    r = 2 * t
     th = t * 2 * np.pi
     x = r * np.cos(th)
     y = r * np.sin(th)
+    return np.vstack((x, y)).T
 
-    
+
 def create_puzzle_cut_straight(num_pieces):
     """generate a cut on a straight baseline, with multiple edges"""
     # return xy of horizontal cut
@@ -374,41 +410,7 @@ def create_puzzle_cut_straight(num_pieces):
     return np.vstack(xy)
 
 
-def plot_square_piece_simple():
-    """simple demo - makes more sense for a 'cut' to be the next
-    level of abstraction after an 'edge'"""
-    pset = get_default_nub_parameters()
-    pset.randomize()
-    bxy, _ = create_puzzle_piece_edge(pset)
-    pset.randomize()
-    txy, _ = create_puzzle_piece_edge(pset)
-    pset.randomize()
-    lxy, _ = create_puzzle_piece_edge(pset)
-    pset.randomize()
-    rxy, _ = create_puzzle_piece_edge(pset)
-    fig = plt.figure()
-    fig.add_subplot(111, aspect='equal')
-    plt.plot(bxy[:, 0], random_sign() * bxy[:, 1], 'k-')
-    plt.plot(txy[:, 0], random_sign() * txy[:, 1] + 1, 'k-')
-    plt.plot(random_sign() * lxy[:, 1], lxy[:, 0], 'k-')
-    plt.plot(random_sign() * rxy[:, 1] + 1, rxy[:, 0], 'k-')
-    plt.show()
-
-
-def plot_edge_simple():
-    """simple demo"""
-    xy, knots = create_puzzle_piece_edge()
-    fig = plt.figure()
-    fig.add_subplot(111, aspect='equal')
-    plt.plot(xy[:, 0], xy[:, 1], 'k-', label='bezier curve')
-    for x, y, mx, my in knots:
-        plt.plot(x, y, 'ro')
-        plt.plot([x, x + mx], [y, y + my], 'r-')
-    plt.axis([0, 1, -0.05, .5])
-    plt.show()
-
-
-def plot_edge_interactive():
+def configure_edge_parameters_interactive():
     """plot a puzzle piece edge, with slider widgets for each of the
     control parameters. useful for tweaking the parameter distributions"""
     # initialize paramset and data
