@@ -13,11 +13,38 @@ from pyzzle.edge import (create_puzzle_piece_edge,
 from panda.debug import debug, pm
 
 
-# i was able to draw a decent puzzle piece edge using illustrator's pen tool
-# - 9 control points, each with controlled slope
-# - illustrator uses bezier
+def main():
+    # SVG looks weird in chrome/osx
+    # test_puzzle()
+    wedding_puzzle()
 
-# 8x10 pieces that are 2"x2" should be plenty - 16"x20" full size
+
+def wedding_puzzle():
+    # 8x10 pieces that are 2"x2" should be plenty - 16"x20" full size
+    size = 2
+    cols, rows = 10, 8
+    puzz = SquareTiledPuzzle(piece_dim=[size, size],
+                             puzzle_dim=[cols, rows],
+                             cut_type='curved')
+
+    fig = plt.figure()
+    fig.add_subplot(111, aspect='equal')
+    puzz.plot(color='k')
+    plt.axis([-.1, size * cols + .1, -.1, size * rows + .1])
+    plt.show()
+
+
+def test_puzzle():
+    cols, rows = 6, 4
+    puzz = SquareTiledPuzzle(puzzle_dim=(cols, rows),
+                             cut_type='curved')
+
+    puzz.write_svg()
+    fig = plt.figure()
+    fig.add_subplot(111, aspect='equal')
+    puzz.plot(color='k')
+    plt.axis([-.1, cols + .1, -.1, rows + .1])
+    plt.show()
 
 
 class Puzzle(object):
@@ -27,24 +54,27 @@ class Puzzle(object):
     def __init__(self, **kwargs):
         pass
 
-    def generate(self):
+    def generate_baselines(self):
         """must define in child.
-        this function should define paths for both self.cuts and self.perimeter,
-        by any means. """
-        self.cuts = []
+        this function should use any means to define both:
+        - self.baselines
+        - self.perimeter"""
+        self.baselines = []
         self.perimeter = []
 
     def plot(self, **kwargs):
         # caller is responsible for plt.show() etc
         ph = []
-        for cut in self.cuts:
+        for cut, base in zip(self.cuts, self.base):
             ph.append(plt.plot(cut[:, 0], cut[:, 1], **kwargs))
+            ph.append(plt.plot(base[:, 0], base[:, 1], 'r--'))
 
         # add perimeter last
         ph.append(plt.plot(self.perimeter[:, 0], self.perimeter[:, 1], **kwargs))
         return ph
 
     def write_svg(self, fname=None):
+        # TODO: the perimeter interior is opaque in chrome/osx, but not chrome/ubuntu
         import svgwrite
         fname = fname or self.svg_filename
         dwg = svgwrite.Drawing(fname, profile='tiny')
@@ -75,33 +105,68 @@ class SquareTiledPuzzle(Puzzle):
 
     def generate(self):
         self.cuts = []
-        cutter = PuzzleCutter(num_pieces=self.puzzle_dim[0],
-                              piece_size=self.piece_dim[0],
-                              cut_type=self.cut_type,
-                              edge_orientation=self.edge_orientation)
+        self.base = []
+        cutter = PuzzleGridCutter(num_pieces=self.puzzle_dim[0],
+                                  piece_size=self.piece_dim[0],
+                                  cut_type=self.cut_type,
+                                  edge_orientation=self.edge_orientation)
 
         for n in range(1, self.puzzle_dim[1]):
             # horizontal cuts run left-right, stack up-down
-            cut = cutter.generate()
-            hcut = cut + np.array([0, n])
+            cut, base = cutter.generate()
+            hcut = (cut + np.array([0, n])) * self.piece_dim[0]
+            hbase = (base + np.array([0, n])) * self.piece_dim[0]
             self.cuts.append(hcut)
+            self.base.append(hbase)
 
         cutter.num_pieces = self.puzzle_dim[1]
         cutter.piece_sizes = self.piece_dim[1]
         for n in range(1, self.puzzle_dim[0]):
             # vertical cuts run up-down, stack left-right
-            cut = cutter.generate()
-            vcut = np.fliplr(cut) + np.array([n, 0])
+            cut, base = cutter.generate()
+            vcut = (np.fliplr(cut) + np.array([n, 0])) * self.piece_dim[1]
+            vbase = (np.fliplr(base) + np.array([n, 0])) * self.piece_dim[1]
             self.cuts.append(vcut)
+            self.base.append(vbase)
 
         unit_square = np.array([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]])
         self.perimeter = unit_square * self.piece_dim * self.puzzle_dim
+
+    def quadratic_baseline(self):
+        # TODO: move this to here from PuzzleCutter
+        pass
 
 
 # TODO: these
 # class TriangleTiledPuzzle(Puzzle):
 # class HexagonTiledPuzzle(Puzzle):
-# class SpiralPuzzle(Puzzle):
+
+class SpiralPuzzle(Puzzle):
+
+    def __init__(self,
+                 spiral_spacing=1,
+                 spiral_turns=4,
+                 radial_spacing=1,
+                 edge_orientation=None,
+                 nub_parameters=None):
+        self.spiral_spacing = spiral_spacing
+        self.spiral_turns = spiral_turns
+        self.radial_spacing = radial_spacing
+        self.edge_orientation = edge_orientation or 'random'
+        self.nub_parameters = nub_parameters or get_default_nub_parameters()
+
+    def generate(self):
+        # TODO: spiral cut
+        # TODO: radial cuts
+        unit_square = np.array([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]])
+        self.perimeter = []  # TODO: figure this out
+
+    def spiral_baseline(t):
+        r = 2 * t
+        th = t * 2 * np.pi
+        x = r * np.cos(th)
+        y = r * np.sin(th)
+        return np.vstack((x, y)).T
 
 
 # class CurvedPuzzleCut(PuzzleCut):
@@ -111,7 +176,7 @@ class SquareTiledPuzzle(Puzzle):
 # - cut_path -> straight line if not supplide
 # - piece_size -> list gives full spacing control
 # in that case, why not use a function?
-class PuzzleCutter(object):
+class PuzzleGridCutter(object):
     """Generates a single 'puzzle cut'
     by default:
     - cut is straight, and along the x-axis
@@ -136,17 +201,20 @@ class PuzzleCutter(object):
             return self.generate_curved()
 
     # TODO: try to unify these two?
+    # they can probably also bubble up to a parent class.
+    # can't actually use a straight line as the baseline because of undefined
+    # normal vector, so going to have to split it up somehow anyway.
     def generate_curved(self):
-        base_curve, t, pts_per_segment = cut_baseline_quadratic(self.num_pieces)
-        xy, straight = create_curved_cut(base_curve, t,
-                                         self.num_pieces,
-                                         pts_per_segment,
-                                         self.nub_parameters)
+        base_curve, t, pts_per_segment = self.quadratic_baseline()  # this is grid-specific
+        xy, straight = create_puzzle_cut_curved(base_curve, t,
+                                                self.num_pieces,
+                                                pts_per_segment,
+                                                self.nub_parameters)  # this is not grid-specific
 
         self.points = np.vstack(xy)
-        return self.points
+        return self.points, base_curve
 
-    def generate_straight(self):
+    def generate_straight(self): # this is grid-specific
         xy = []
         for n in range(self.num_pieces):
             self.nub_parameters.randomize()
@@ -160,137 +228,60 @@ class PuzzleCutter(object):
             xy.append(xy0)
 
         self.points = np.vstack(xy)
-        return self.points
+        return self.points, None
 
+    def quadratic_baseline(self, pts_per_segment=25):
+        """ define a baseline for a curved cut, on which the edge cut can be applied.
+        uses a simple piecewise quadratic function"""
 
-def main():
-    # plot_grid_puzzle_old()
-    # plot_curvy_grid_puzzle()
-    # draw_svg_curvy_grid_puzzle()
+        pts_per_piece = pts_per_segment * SEGMENTS_PER_PIECE
+        pts_total = self.num_pieces * pts_per_piece
 
-    plot_grid_puzzle(cut_type='curved')
+        t0 = np.linspace(0, 1, pts_per_piece + 1)
+        t = np.linspace(0, self.num_pieces, pts_total + 1)
+        x = t
+        y_seg = 0.25 * t0 * (1 - t0)
+        # concat y_seg's
+        y = []
+        for n in range(self.num_pieces - 1):
+            y.append(random_sign() * y_seg[0:-1])
+        y.append(random_sign() * y_seg)
+        y = np.hstack(y)
+
+        base_curve = np.vstack((x, y)).T
+
+        return base_curve, t, pts_per_segment
+
+    def spline_baseline(self, pts_per_segment=25):
+        # TODO: base curve should flatten out rather than have sharp points
+        pass
 
 
 random_sign = lambda: random.choice([1, -1])
 
 
-def plot_grid_puzzle(**kwargs):
-    cols, rows = 6, 4
-    puzz = SquareTiledPuzzle(puzzle_dim=(cols, rows), **kwargs)
-    fig = plt.figure()
-    fig.add_subplot(111, aspect='equal')
-    puzz.plot(color='k')
-    plt.axis([-.1, cols + .1, -.1, rows + .1])
-    plt.show()
-
-
-def draw_svg_curvy_grid_puzzle(rows=6, cols=8):
-    import svgwrite
-    import svgtools
-    svg_name = 'puzzle.svg'
-    dwg = svgwrite.Drawing(svg_name, profile='tiny')
-
-    piece_size = 2
-    scale = 25.4
-    for n in range(1, rows):
-        print('horizontal cut %d' % n)
-        cut, straight, base_curve = create_puzzle_cut_curved_quadratic(cols)
-        cut[:, 1] += n
-        cut *= piece_size * scale
-        polyline = svgwrite.shapes.Polyline(points=cut, stroke='black', fill='white')
-        #path = svgtools.path_from_array(cut, stroke='black', fill='white')
-        dwg.add(polyline)
-
-    for n in range(1, cols):
-        print('vertical cut %d' % n)
-        cut, straight, base_curve = create_puzzle_cut_curved_quadratic(rows)
-        cut[:, 1] += n
-        cut = np.fliplr(cut)  # transpose each vector
-        cut *= piece_size * scale
-        polyline = svgwrite.shapes.Polyline(points=cut, stroke='black', fill='white')
-        #path = svgtools.path_from_array(cut, stroke='black', fill='white')
-        dwg.add(polyline)
-
-    print('perimeter cut')
-    perimeter = np.array([[0, 0],
-                          [piece_size*cols, 0],
-                          [piece_size*cols, piece_size*rows],
-                          [0, piece_size*rows],
-                          [0, 0]]) * scale
-    polyline = svgwrite.shapes.Polyline(points=perimeter, stroke='black')
-    polyline.fill('white', opacity=0)
-    dwg.add(polyline)
-
-    print('finished drawing %s' % svg_name)
-    dwg.save()
-
-
-def plot_curvy_grid_puzzle(rows=6, cols=8):
-    piece_size = 2
-    fig = plt.figure()
-    fig.add_subplot(111, aspect='equal')
-    for n in range(1, rows):
-        cut, straight, base_curve = create_puzzle_cut_curved_quadratic(cols)
-        plt.plot(piece_size*(cut[:, 0]), piece_size*(cut[:, 1] + n), 'b-')
-        plt.plot(piece_size*base_curve[:, 0], piece_size*(base_curve[:, 1] + n), 'r--')
-
-    for n in range(1, cols):
-        cut, straight, base_curve = create_puzzle_cut_curved_quadratic(rows)
-        plt.plot(piece_size*(cut[:, 1] + n), piece_size*cut[:, 0], 'b-')
-        plt.plot(piece_size*(base_curve[:, 1] + n), piece_size*base_curve[:, 0], 'r--')
-
-    perim_x = [0, piece_size*cols, piece_size*cols, 0, 0]
-    perim_y = [0, 0, piece_size*rows, piece_size*rows, 0]
-    plt.plot(perim_x, perim_y, 'k-')
-    d = .02
-    plt.subplots_adjust(bottom=d, left=d, top=1-d, right=1-d)
-    #plt.axis([-.5, cols+.5, -.5, rows+.5])
-    #terminal_plot()
-    plt.show()
-
-
-def cut_baseline_quadratic(num_pieces, pts_per_segment=25):
-    """ define a baseline for a curved cut, on which the edge cut can be applied
-    using a quadratic function"""
-
-    pts_per_piece = pts_per_segment * SEGMENTS_PER_PIECE
-    pts_total = num_pieces * pts_per_piece
-    
-    t0 = np.linspace(0, 1, pts_per_piece + 1)
-    t = np.linspace(0, num_pieces, pts_total + 1)
-    x = t
-    y_seg = 0.25 * t0 * (1-t0)
-    # concat y_seg's
-    y = []
-    for n in range(num_pieces - 1):
-        y.append(random_sign() * y_seg[0:-1])
-    y.append(random_sign() * y_seg)
-    y = np.hstack(y)
-
-    base_curve = np.vstack((x, y)).T
-
-    return base_curve, t, pts_per_segment
-    
-
-def cut_baseline_spline(num_pieces, pts_per_segment=25):
-    # TODO: base curve should flatten out rather than have sharp points
+def create_puzzle_cut_straight_irregular(piece_spacing):
     pass
-    
-
-def create_puzzle_cut_curved_quadratic(num_pieces, nub_parameters=None):
-    """ returns a single cut for the specified number of pieces,
-    using a curved baseline"""
-    
-    base_curve, t, pts_per_segment = cut_baseline_quadratic(num_pieces)
-    cut, straight = create_curved_cut(base_curve, t, num_pieces, pts_per_segment, nub_parameters)
-    return cut, straight, base_curve
 
 
-def create_curved_cut(base_curve, t, num_pieces, pts_per_segment, nub_parameters=None):
-    """ """
-    # TODO: reparameterize the curve on arclength
+def create_puzzle_cut_straight(num_pieces):
+    """generate a cut on a straight baseline, with multiple edges"""
+    # return xy of horizontal cut
+    pset = get_default_nub_parameters()
+    xy = []
+    for n in range(num_pieces):
+        pset.randomize()
+        xy0, _ = create_puzzle_piece_edge(pset)
+        xy0[:, 0] += n
+        xy0[:, 1] *= random_sign()
+        xy.append(xy0)
+
+    return np.vstack(xy)
+
+
+def create_puzzle_cut_curved(base_curve, t, num_pieces, pts_per_segment, nub_parameters=None):
+    """given a base curve, maps puzzle pieces onto that curve smoothly"""
     T, N, B = frenet_frame(base_curve)
-    pieces = []
     nub_parameters = nub_parameters or get_default_nub_parameters()
     pts_per_piece = pts_per_segment * SEGMENTS_PER_PIECE
 
@@ -311,6 +302,8 @@ def create_curved_cut(base_curve, t, num_pieces, pts_per_segment, nub_parameters
         # the reason: the straight segment of the edge definition does not correspond
         # to the straight segment of the null_base_curve - the parameter moves faster
         # on the edge
+        # this could be "fixed" by making the parameterization match for the straight segments
+        # NOT by naturalizing the curve parameter
         start = pts_per_piece * n
         end = pts_per_piece * (n + 1) + 1
         base_segment = base_curve[start:end]
@@ -323,49 +316,5 @@ def create_curved_cut(base_curve, t, num_pieces, pts_per_segment, nub_parameters
     return np.vstack(xy), np.vstack(straights)
 
 
-def archimedean_spiral(t):
-    # use as base for spiral puzzle cut
-    r = 2 * t
-    th = t * 2 * np.pi
-    x = r * np.cos(th)
-    y = r * np.sin(th)
-    return np.vstack((x, y)).T
-
-
 if __name__ == '__main__':
     main()
-
-
-# deprecated
-
-def plot_grid_puzzle_old(rows=4, cols=6):
-    fig = plt.figure()
-    fig.add_subplot(111, aspect='equal')
-    for n in range(1, rows):
-        hcut = create_puzzle_cut_straight(cols)
-        plt.plot(hcut[:, 0], hcut[:, 1] + n, 'k-')
-
-    for n in range(1, cols):
-        vcut = create_puzzle_cut_straight(rows)
-        plt.plot(vcut[:, 1] + n, vcut[:, 0], 'k-')
-
-    plt.plot([0, cols, cols, 0, 0], [0, 0, rows, rows, 0], 'k-')
-    plt.axis([-.5, cols + .5, -.5, rows + .5])
-    plt.show()
-
-
-def create_puzzle_cut_straight(num_pieces):
-    """generate a cut on a straight baseline, with multiple edges"""
-    # return xy of horizontal cut
-    pset = get_default_nub_parameters()
-    xy = []
-    for n in range(num_pieces):
-        pset.randomize()
-        xy0, _ = create_puzzle_piece_edge(pset)
-        xy0[:, 0] += n
-        xy0[:, 1] *= random_sign()
-        xy.append(xy0)
-
-    return np.vstack(xy)
-
-
