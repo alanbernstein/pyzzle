@@ -18,6 +18,11 @@ from geometry.spline import slope_controlled_bezier_curve
 # might not be any good way to generalize that
 
 
+# i was able to draw a decent puzzle piece edge using illustrator's pen tool
+# - 9 control points, each with controlled slope
+# - illustrator uses bezier, so that should work
+
+
 class Param(object):
     def __init__(self, name, val, min, max, relative=False):
         self.name = name
