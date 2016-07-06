@@ -1,12 +1,15 @@
 #!/usr/bin/python
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
 import random
 
 from plot_tools import terminal_plot
-from geometry.spline import slope_controlled_bezier_curve
 from geometry.curves import frenet_frame, add_frenet_offset_2D
+
+from pyzzle.edge import (create_puzzle_piece_edge,
+                         get_default_nub_parameters,
+                         SEGMENTS_PER_PIECE)
+
 from panda.debug import debug, pm
 
 
@@ -15,70 +18,6 @@ from panda.debug import debug, pm
 # - illustrator uses bezier
 
 # 8x10 pieces that are 2"x2" should be plenty - 16"x20" full size
-
-
-class Param(object):
-    def __init__(self, name, val, min, max, relative=False):
-        self.name = name
-        self.val = val
-        self.min = min
-        self.max = max
-        self.relative = relative
-
-    def __str__(self):
-        return '%s in [%s %s]: %s' % (self.name, self.min, self.max, self.val)
-
-
-class ParamSet(object):
-    """ugly thing that allows a relatively clean interface:
-    pset = Paramset([Param(...), Param(...), ...])  # init with value and bounds
-    pset.paramname.val                              # get value (known name)
-    pset.paramname.min                              # get min bound
-    pset.set_param(paramname, val)                    # set val of parameter, programmatically (unknown name)
-    this interface allows looping over the set of parameter members,
-    which greatly simplifies the interactive plot.
-    """
-    # TODO: rewrite this as ParameterDistribution,
-    # with method sample(), that does the same thing as randomize() here,
-    # but returns a random sample rather than setting
-    # not sure if that would work for the interactive plot, have to think about it
-    def __init__(self, paramlist):
-        for param in paramlist:
-            self.__setattr__(param.name, param)
-
-    def randomize(self):
-        for paramname in self.get_param_names():
-            param = self.get_param(paramname)
-            val = random.uniform(param.min, param.max)
-            self.set_param(paramname, val)
-
-    def get_param_names(self):
-        """get list of all params contained within"""
-        return self.__dict__.keys()
-
-    def get_param(self, paramname):
-        """get full param object by name"""
-        return self.__getattribute__(paramname)
-
-    def set_param(self, paramname, val):
-        """set the `val` attribute of a param object, by name"""
-        param = self.__getattribute__(paramname)
-        param.val = val
-        self.__setattr__(paramname, param)
-
-
-def get_default_nub_parameters():
-    # TODO: make these look better
-    pset = ParamSet([Param('pos', 0.5, .4, .6),
-                     Param('height', 0.25, .2, 0.3),
-                     Param('head_width', 0.25, .2, 0.3),
-                     Param('head_height', 0.75, 0.7, .8, relative=True),
-                     Param('neck_width', 0.5, .4, .6, relative=True),
-                     Param('neck_height', 0.25, .2, 0.3, relative=True),
-                     Param('neck_knot_strength', 0.05, .03, 0.07),
-                     Param('head_knot_strength', 0.05, .03, 0.07),
-                     ])
-    return pset
 
 
 class Puzzle(object):
@@ -120,7 +59,6 @@ class Puzzle(object):
         dwg.save()
 
 
-# TODO: these
 class SquareTiledPuzzle(Puzzle):
     def __init__(self,
                  piece_dim=None,
@@ -160,6 +98,7 @@ class SquareTiledPuzzle(Puzzle):
         self.perimeter = unit_square * self.piece_dim * self.puzzle_dim
 
 
+# TODO: these
 # class TriangleTiledPuzzle(Puzzle):
 # class HexagonTiledPuzzle(Puzzle):
 # class SpiralPuzzle(Puzzle):
@@ -191,6 +130,23 @@ class PuzzleCutter(object):
         self.generate()
 
     def generate(self):
+        if self.cut_type == 'straight':
+            return self.generate_straight()
+        elif self.cut_type == 'curved':
+            return self.generate_curved()
+
+    # TODO: try to unify these two?
+    def generate_curved(self):
+        base_curve, t, pts_per_segment = cut_baseline_quadratic(self.num_pieces)
+        xy, straight = create_curved_cut(base_curve, t,
+                                         self.num_pieces,
+                                         pts_per_segment,
+                                         self.nub_parameters)
+
+        self.points = np.vstack(xy)
+        return self.points
+
+    def generate_straight(self):
         xy = []
         for n in range(self.num_pieces):
             self.nub_parameters.randomize()
@@ -208,42 +164,23 @@ class PuzzleCutter(object):
 
 
 def main():
-    # plot_edge_simple()
-    # plot_edge_interactive()
-    # plot_square_piece_simple()
-    # plot_grid_puzzle()
+    # plot_grid_puzzle_old()
     # plot_curvy_grid_puzzle()
     # draw_svg_curvy_grid_puzzle()
 
-    plot_grid_puzzle_refactored()
+    plot_grid_puzzle(cut_type='curved')
 
 
 random_sign = lambda: random.choice([1, -1])
 
 
-def plot_grid_puzzle_refactored():
+def plot_grid_puzzle(**kwargs):
     cols, rows = 6, 4
-    puzz = SquareTiledPuzzle(puzzle_dim=(cols, rows))
+    puzz = SquareTiledPuzzle(puzzle_dim=(cols, rows), **kwargs)
     fig = plt.figure()
     fig.add_subplot(111, aspect='equal')
     puzz.plot(color='k')
     plt.axis([-.1, cols + .1, -.1, rows + .1])
-    plt.show()
-
-
-def plot_grid_puzzle(rows=4, cols=6):
-    fig = plt.figure()
-    fig.add_subplot(111, aspect='equal')
-    for n in range(1, rows):
-        hcut = create_puzzle_cut_straight(cols)
-        plt.plot(hcut[:, 0], hcut[:, 1] + n, 'k-')
-
-    for n in range(1, cols):
-        vcut = create_puzzle_cut_straight(rows)
-        plt.plot(vcut[:, 1] + n, vcut[:, 0], 'k-')
-
-    plt.plot([0, cols, cols, 0, 0], [0, 0, rows, rows, 0], 'k-')
-    plt.axis([-.5, cols + .5, -.5, rows + .5])
     plt.show()
 
 
@@ -340,21 +277,21 @@ def cut_baseline_spline(num_pieces, pts_per_segment=25):
     pass
     
 
-def create_puzzle_cut_curved_quadratic(num_pieces):
+def create_puzzle_cut_curved_quadratic(num_pieces, nub_parameters=None):
     """ returns a single cut for the specified number of pieces,
     using a curved baseline"""
     
     base_curve, t, pts_per_segment = cut_baseline_quadratic(num_pieces)
-    cut, straight = create_curved_cut(base_curve, t, num_pieces, pts_per_segment)
+    cut, straight = create_curved_cut(base_curve, t, num_pieces, pts_per_segment, nub_parameters)
     return cut, straight, base_curve
 
 
-def create_curved_cut(base_curve, t, num_pieces, pts_per_segment):
+def create_curved_cut(base_curve, t, num_pieces, pts_per_segment, nub_parameters=None):
     """ """
     # TODO: reparameterize the curve on arclength
     T, N, B = frenet_frame(base_curve)
     pieces = []
-    pset = get_default_nub_parameters()
+    nub_parameters = nub_parameters or get_default_nub_parameters()
     pts_per_piece = pts_per_segment * SEGMENTS_PER_PIECE
 
     tt = np.linspace(0, 1, pts_per_piece + 1)
@@ -364,8 +301,8 @@ def create_curved_cut(base_curve, t, num_pieces, pts_per_segment):
     xy = []
     for n in range(num_pieces):
         # get a piece edge
-        pset.randomize()
-        pxy, _ = create_puzzle_piece_edge(pset, pts_per_segment)
+        nub_parameters.randomize()
+        pxy, _ = create_puzzle_piece_edge(nub_parameters, pts_per_segment)
         dxy = pxy - null_base_curve
         straights.append(pxy + [n, 0])
 
@@ -395,6 +332,28 @@ def archimedean_spiral(t):
     return np.vstack((x, y)).T
 
 
+if __name__ == '__main__':
+    main()
+
+
+# deprecated
+
+def plot_grid_puzzle_old(rows=4, cols=6):
+    fig = plt.figure()
+    fig.add_subplot(111, aspect='equal')
+    for n in range(1, rows):
+        hcut = create_puzzle_cut_straight(cols)
+        plt.plot(hcut[:, 0], hcut[:, 1] + n, 'k-')
+
+    for n in range(1, cols):
+        vcut = create_puzzle_cut_straight(rows)
+        plt.plot(vcut[:, 1] + n, vcut[:, 0], 'k-')
+
+    plt.plot([0, cols, cols, 0, 0], [0, 0, rows, rows, 0], 'k-')
+    plt.axis([-.5, cols + .5, -.5, rows + .5])
+    plt.show()
+
+
 def create_puzzle_cut_straight(num_pieces):
     """generate a cut on a straight baseline, with multiple edges"""
     # return xy of horizontal cut
@@ -410,102 +369,3 @@ def create_puzzle_cut_straight(num_pieces):
     return np.vstack(xy)
 
 
-def configure_edge_parameters_interactive():
-    """plot a puzzle piece edge, with slider widgets for each of the
-    control parameters. useful for tweaking the parameter distributions"""
-    # initialize paramset and data
-    pset = get_default_nub_parameters()
-    pset.randomize()
-    xy, knots = create_puzzle_piece_edge(pset)
-
-    # initialize graphics objects
-    plt.subplot(111)
-    plt.subplots_adjust(bottom=.6)
-    l0, = plt.plot(xy[:, 0], xy[:, 1], 'k')
-    l1 = []
-    l2 = []
-    for x, y, mx, my in knots:
-        ll, = plt.plot(x, y, 'ro')
-        l1.append(ll)
-        ll, = plt.plot([x, x + mx], [y, y + my], 'r-')
-        l2.append(ll)
-    plt.axis([0, 1, 0, .4])
-
-    # define sliders
-    axs = {}
-    sliders = {}
-    for n, pname in enumerate(pset.get_param_names()):
-        axs[pname] = plt.axes([.25, .05 + n * .05, .65, .03])
-        param = pset.__getattribute__(pname)
-        sliders[pname] = Slider(axs[pname], pname.replace('_', ' '),
-                                param.min, param.max, valinit=param.val)
-
-    # define callback
-    def update(val):
-        # read sliders, update paramset
-        for k, v in sliders.items():
-            pset.set_param(k, v.val)
-
-        # generate new data
-        xy, knots = create_puzzle_piece_edge(pset)
-
-        # attach data to graphics objects
-        l0.set_data(xy[:, 0], xy[:, 1])
-        for n, k in enumerate(knots):
-            l1[n].set_data(k[0], k[1])
-            l2[n].set_data([k[0], k[0] + k[2]], [k[1], k[1] + k[3]])
-
-        plt.draw()
-
-    # attach callbacks
-    for slider in sliders.values():
-        slider.on_changed(update)
-
-    plt.show()
-
-
-SEGMENTS_PER_PIECE = 8  # this should reflect the knots array here
-def create_puzzle_piece_edge(params=None, pts_per_segment=25):
-    # in units of edge length
-    if params:
-        pos = params.pos.val
-        height = params.height.val  # height of tallest point
-
-        head_width = params.head_width.val               # width of widest point
-        head_height = params.head_height.val * height    # height of widest point
-        neck_width = params.neck_width.val * head_width  # width of narrow point
-        neck_height = params.neck_height.val * height    # height of narrow point
-
-        neck_knot_strength = params.neck_knot_strength.val
-        head_knot_strength = params.head_knot_strength.val
-    else:
-        # want to continue being able to use this without all the mess of the paramset class
-        pos = .5
-        height = .25
-        head_width = .25
-        head_height = .75 * height
-        neck_width = .5 * head_width
-        neck_height = .25 * height
-
-        neck_knot_strength = 0.05
-        head_knot_strength = 0.05
-
-    # define control knots
-    knots = np.array([[0, 0, .2, 0],
-                      [pos - head_width / 2, 0, .05, 0],
-                      [pos - neck_width / 2, neck_height, 0, neck_knot_strength],
-                      [pos - head_width / 2, head_height, 0, head_knot_strength],
-                      [pos, height, .05, 0],
-                      [pos + head_width / 2, head_height, 0, -head_knot_strength],
-                      [pos + neck_width / 2, neck_height, 0, -neck_knot_strength],
-                      [pos + head_width / 2, 0, .05, 0],
-                      [1, 0, .2, 0]
-                      ])
-
-    # generate spline curves
-    xy = slope_controlled_bezier_curve(knots, pts_per_segment)
-    return xy, knots
-
-
-if __name__ == '__main__':
-    main()
