@@ -1,4 +1,11 @@
 #!/usr/bin/python
+"""
+Terminology
+- puzzle - the whole thing
+- puzzle cut - one continuous path, composed of one or more 'puzzle piece edge'
+- puzzle piece edge - 
+- puzzle piece - a simple connected region, bounded by puzzle piece edges
+"""
 import numpy as np
 import matplotlib.pyplot as plt
 import random
@@ -7,38 +14,20 @@ from plot_tools import terminal_plot
 from geometry.curves import frenet_frame, add_frenet_offset_2D
 
 from pyzzle.edge import (create_puzzle_piece_edge,
-                         get_default_nub_parameters,
+                         get_default_tab_parameters,
                          SEGMENTS_PER_PIECE)
 
 from panda.debug import debug, pm
 
 
 def main():
-    # SVG looks weird in chrome/osx
-    # test_puzzle()
-    wedding_puzzle()
-
-
-def wedding_puzzle():
-    # 8x10 pieces that are 2"x2" should be plenty - 16"x20" full size
-    size = 2
-    cols, rows = 10, 8
-    puzz = SquareTiledPuzzle(piece_dim=[size, size],
-                             puzzle_dim=[cols, rows],
-                             cut_type='curved')
-
-    fig = plt.figure()
-    fig.add_subplot(111, aspect='equal')
-    puzz.plot(color='k')
-    plt.axis([-.1, size * cols + .1, -.1, size * rows + .1])
-    plt.show()
+    test_puzzle()
 
 
 def test_puzzle():
     cols, rows = 6, 4
     puzz = SquareTiledPuzzle(puzzle_dim=(cols, rows),
                              cut_type='curved')
-
     puzz.write_svg()
     fig = plt.figure()
     fig.add_subplot(111, aspect='equal')
@@ -74,7 +63,6 @@ class Puzzle(object):
         return ph
 
     def write_svg(self, fname=None):
-        # TODO: the perimeter interior is opaque in chrome/osx, but not chrome/ubuntu
         import svgwrite
         fname = fname or self.svg_filename
         dwg = svgwrite.Drawing(fname, profile='tiny')
@@ -86,21 +74,26 @@ class Puzzle(object):
                                             stroke='black')
         polyline.fill('white', opacity=0)
         dwg.add(polyline)
+        debug()
         dwg.save()
 
 
 class SquareTiledPuzzle(Puzzle):
+    # TODO: this should define baselines:
+    # - path
+    # - piece_spacing OR piece_positions
+    # - type: {'line', 'curve'} (because line can't be handled by 
     def __init__(self,
                  piece_dim=None,
                  puzzle_dim=None,
                  cut_type=None,
                  edge_orientation=None,
-                 nub_parameters=None):
+                 tab_parameters=None):
         self.piece_dim = piece_dim or [1, 1]    # in measurement units
         self.puzzle_dim = puzzle_dim or [4, 6]  # in puzzle pieces
         self.cut_type = cut_type or 'straight'
         self.edge_orientation = edge_orientation or 'random'
-        self.nub_parameters = nub_parameters or get_default_nub_parameters()
+        self.tab_parameters = tab_parameters or get_default_tab_parameters()
         self.generate()
 
     def generate(self):
@@ -148,12 +141,12 @@ class SpiralPuzzle(Puzzle):
                  spiral_turns=4,
                  radial_spacing=1,
                  edge_orientation=None,
-                 nub_parameters=None):
+                 tab_parameters=None):
         self.spiral_spacing = spiral_spacing
         self.spiral_turns = spiral_turns
         self.radial_spacing = radial_spacing
         self.edge_orientation = edge_orientation or 'random'
-        self.nub_parameters = nub_parameters or get_default_nub_parameters()
+        self.tab_parameters = tab_parameters or get_default_tab_parameters()
 
     def generate(self):
         # TODO: spiral cut
@@ -176,6 +169,10 @@ class SpiralPuzzle(Puzzle):
 # - cut_path -> straight line if not supplide
 # - piece_size -> list gives full spacing control
 # in that case, why not use a function?
+
+# split into LineCutter (handled trivially)
+# and CurveCutter (handled via 
+
 class PuzzleGridCutter(object):
     """Generates a single 'puzzle cut'
     by default:
@@ -186,12 +183,12 @@ class PuzzleGridCutter(object):
                  piece_size=1,
                  cut_type=None,
                  edge_orientation=None,
-                 nub_parameters=None):
+                 tab_parameters=None):
         self.num_pieces = num_pieces
         self.piece_size = piece_size
         self.cut_type = cut_type or 'straight'
         self.edge_orientation = edge_orientation or 'random'
-        self.nub_parameters = nub_parameters or get_default_nub_parameters()
+        self.tab_parameters = tab_parameters or get_default_tab_parameters()
         self.generate()
 
     def generate(self):
@@ -209,7 +206,7 @@ class PuzzleGridCutter(object):
         xy, straight = create_puzzle_cut_curved(base_curve, t,
                                                 self.num_pieces,
                                                 pts_per_segment,
-                                                self.nub_parameters)  # this is not grid-specific
+                                                self.tab_parameters)  # this is not grid-specific
 
         self.points = np.vstack(xy)
         return self.points, base_curve
@@ -217,8 +214,8 @@ class PuzzleGridCutter(object):
     def generate_straight(self): # this is grid-specific
         xy = []
         for n in range(self.num_pieces):
-            self.nub_parameters.randomize()
-            xy0, _ = create_puzzle_piece_edge(self.nub_parameters)
+            self.tab_parameters.randomize()
+            xy0, _ = create_puzzle_piece_edge(self.tab_parameters)
             xy0 *= self.piece_size
             xy0[:, 0] += self.piece_size * n
             if self.edge_orientation == 'random':
@@ -267,7 +264,7 @@ def create_puzzle_cut_straight_irregular(piece_spacing):
 def create_puzzle_cut_straight(num_pieces):
     """generate a cut on a straight baseline, with multiple edges"""
     # return xy of horizontal cut
-    pset = get_default_nub_parameters()
+    pset = get_default_tab_parameters()
     xy = []
     for n in range(num_pieces):
         pset.randomize()
@@ -279,10 +276,10 @@ def create_puzzle_cut_straight(num_pieces):
     return np.vstack(xy)
 
 
-def create_puzzle_cut_curved(base_curve, t, num_pieces, pts_per_segment, nub_parameters=None):
+def create_puzzle_cut_curved(base_curve, t, num_pieces, pts_per_segment, tab_parameters=None):
     """given a base curve, maps puzzle pieces onto that curve smoothly"""
     T, N, B = frenet_frame(base_curve)
-    nub_parameters = nub_parameters or get_default_nub_parameters()
+    tab_parameters = tab_parameters or get_default_tab_parameters()
     pts_per_piece = pts_per_segment * SEGMENTS_PER_PIECE
 
     tt = np.linspace(0, 1, pts_per_piece + 1)
@@ -292,8 +289,8 @@ def create_puzzle_cut_curved(base_curve, t, num_pieces, pts_per_segment, nub_par
     xy = []
     for n in range(num_pieces):
         # get a piece edge
-        nub_parameters.randomize()
-        pxy, _ = create_puzzle_piece_edge(nub_parameters, pts_per_segment)
+        tab_parameters.randomize()
+        pxy, _ = create_puzzle_piece_edge(tab_parameters, pts_per_segment)
         dxy = pxy - null_base_curve
         straights.append(pxy + [n, 0])
 

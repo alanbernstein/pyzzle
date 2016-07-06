@@ -69,7 +69,7 @@ class ParamSet(object):
         self.__setattr__(paramname, param)
 
 
-def get_default_nub_parameters():
+def get_default_tab_parameters():
     # TODO: make these look better
     pset = ParamSet([Param('pos', 0.5, .4, .6),
                      Param('height', 0.25, .2, 0.3),
