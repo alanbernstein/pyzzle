@@ -2,6 +2,8 @@ import matplotlib.pyplot as plt
 from pyzzle import create_puzzle_piece_edge
 
 
+# TODO: rewrite with OO interface
+
 def plot_straight_edge():
     """generate and plot one puzzle piece edge, with a straight baseline"""
     xy, knots = create_puzzle_piece_edge()

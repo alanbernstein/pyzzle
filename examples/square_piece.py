@@ -7,6 +7,8 @@ from pyzzle import (get_default_nub_parameters,
 random_sign = lambda: random.choice([1, -1])
 
 
+# TODO: rewrite with OO interface
+
 def plot_square_piece_simple():
     """simple demo - makes more sense for a 'cut' to be the next
     level of abstraction after an 'edge' though"""
