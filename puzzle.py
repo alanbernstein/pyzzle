@@ -3,6 +3,7 @@
 Terminology
 - puzzle - the whole thing
 - puzzle cut - one continuous path, composed of one or more 'puzzle piece edge'
+- base cut - the path followed by 
 - puzzle piece edge - 
 - puzzle piece - a simple connected region, bounded by puzzle piece edges
 """
@@ -11,7 +12,7 @@ import matplotlib.pyplot as plt
 import random
 
 from plot_tools import terminal_plot
-from geometry.curves import frenet_frame, add_frenet_offset_2D
+from geometry.curves import frenet_frame, frenet_frame_2D, add_frenet_offset_2D
 
 from pyzzle.edge import (create_puzzle_piece_edge,
                          get_default_tab_parameters,
@@ -25,30 +26,34 @@ def main():
 
 
 def test_puzzle():
-    cols, rows = 6, 4
+    size = 1
+    cols, rows = 4, 4
     puzz = SquareTiledPuzzle(puzzle_dim=(cols, rows),
+                             piece_dim=(size, size),
                              cut_type='curved')
     puzz.write_svg()
     fig = plt.figure()
     fig.add_subplot(111, aspect='equal')
     puzz.plot(color='k')
-    plt.axis([-.1, cols + .1, -.1, rows + .1])
+    plt.axis([-.1, size * cols + .1, -.1, size * rows + .1])
     plt.show()
 
 
 class Puzzle(object):
+    # TODO: this should implement a simple square grid puzzle,
+    # and children should override the generate and init methods
     svg_filename = 'puzzle_cuts.svg'
-    svg_scale = 25.4  # TODO: fix this
+    svg_scale = 100  # svg default unit is .01" (in corel at least)
 
     def __init__(self, **kwargs):
         pass
 
-    def generate_baselines(self):
+    def generate_basecuts(self):
         """must define in child.
         this function should use any means to define both:
         - self.baselines
         - self.perimeter"""
-        self.baselines = []
+        self.basecuts = []
         self.perimeter = []
 
     def plot(self, **kwargs):
@@ -74,7 +79,6 @@ class Puzzle(object):
                                             stroke='black')
         polyline.fill('white', opacity=0)
         dwg.add(polyline)
-        debug()
         dwg.save()
 
 
@@ -82,7 +86,9 @@ class SquareTiledPuzzle(Puzzle):
     # TODO: this should define baselines:
     # - path
     # - piece_spacing OR piece_positions
-    # - type: {'line', 'curve'} (because line can't be handled by 
+    # - type: {'line', 'curve'} (because line can't be handled by frenet_frame)
+    #   idea: just write a function line_frenet() with same signature as frenet_frame,
+    #         but produces some well-defined normal and binormal for a straight line
     def __init__(self,
                  piece_dim=None,
                  puzzle_dim=None,
@@ -125,12 +131,22 @@ class SquareTiledPuzzle(Puzzle):
         unit_square = np.array([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]])
         self.perimeter = unit_square * self.piece_dim * self.puzzle_dim
 
-    def quadratic_baseline(self):
-        # TODO: move this to here from PuzzleCutter
+
+class IrregularSquarePuzzle(Puzzle):
+    """every piece is composed of several normal grid cells"""
+
+    def __init__(self):
         pass
+
+    def generate(self):
+        self.basecuts = []
+        self.cuts = []
 
 
 # TODO: these
+# class VoronoiPuzzle(Puzzle)
+# class SquarePuzzleWithLargeCenter(Puzzle)      # plain grid except center piece
+# class SquarePuzzleWithArbitraryPieces(Puzzle)  # fully arbitrary shapes
 # class TriangleTiledPuzzle(Puzzle):
 # class HexagonTiledPuzzle(Puzzle):
 
@@ -162,16 +178,41 @@ class SpiralPuzzle(Puzzle):
         return np.vstack((x, y)).T
 
 
+# class LinePuzzleCut(PuzzleCut):
 # class CurvedPuzzleCut(PuzzleCut):
 # class IrregularStraightPuzzleCut(PuzzleCut):  # non-even piece spacing
 # class IrregularCurvedPuzzleCut(PuzzleCut):    # similar
-# all four of these can be unified, by adding:
-# - cut_path -> straight line if not supplide
-# - piece_size -> list gives full spacing control
-# in that case, why not use a function?
+# can unify all of these
 
-# split into LineCutter (handled trivially)
-# and CurveCutter (handled via 
+class PuzzleCutter(object):
+    """Accepts a plane curve, and transforms it into a "puzzle cut"
+    with specified number of pieces, tab parameters, etc"""
+    # default behavior:
+    # - 
+    # - num_pieces = floor(arclen(curve))
+    # - piece positions = equally spaced
+    def __init__(self, path=None, num_pieces=None, length=1, positions=None,
+                 tab_pattern=None, tab_parameters=None):
+        self.path = path or np.array([[0, 0], [length, 0]])
+        self.base_length = 0  # TODO: get path length
+        self.num_pieces = num_pieces or np.floor(self.path_length)
+        self.positions = positions or self.get_monospaced_positions(self.base_length, self.num_pieces)
+        self.tab_pattern = tab_pattern or 'random'
+        self.tab_parameters = tab_parameters or get_default_tab_parameters()
+
+    def get_monospaced_positions(self, L, N):
+        return np.arange(0, L, L/N) + L/(2*N)
+
+    def generate(self):
+        xy, straight = create_puzzle_cut_curved(self.path, t,
+                                                self.num_pieces,
+                                                pts_per_segment,
+                                                self.tab_parameters)  # this is not grid-specific
+
+        self.points = np.vstack(xy)
+        return self.points
+
+
 
 class PuzzleGridCutter(object):
     """Generates a single 'puzzle cut'
@@ -211,7 +252,7 @@ class PuzzleGridCutter(object):
         self.points = np.vstack(xy)
         return self.points, base_curve
 
-    def generate_straight(self): # this is grid-specific
+    def generate_straight(self):  # this is grid-specific
         xy = []
         for n in range(self.num_pieces):
             self.tab_parameters.randomize()
@@ -251,6 +292,17 @@ class PuzzleGridCutter(object):
 
     def spline_baseline(self, pts_per_segment=25):
         # TODO: base curve should flatten out rather than have sharp points
+        """1. choose tab orientations
+        2. for each tab, define the spline knots for its edge:
+           left-tab right-tab -> knot-slope
+           [-1 1] -> -1
+           [1 1]  ->  0
+           [1 -1] ->  1
+           [-1 -1] -> 0
+           knot-slope ~ (left-right) ~ -diff(tabs)
+        3. compile all knots into one spline
+        """
+        tab_signs = self.num_pieces
         pass
 
 
@@ -258,6 +310,7 @@ random_sign = lambda: random.choice([1, -1])
 
 
 def create_puzzle_cut_straight_irregular(piece_spacing):
+    """variable spacing"""
     pass
 
 
