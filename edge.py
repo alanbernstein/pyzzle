@@ -121,6 +121,14 @@ def create_puzzle_piece_edge(params=None, pts_per_segment=25):
                       [1, 0, .2, 0]
                       ])
 
-    # generate spline curves
+    # generate spline curve
     xy = slope_controlled_bezier_curve(knots, pts_per_segment)
-    return xy, knots
+
+    # generate offset vector from baseline
+    edge_length = 1
+    pts_per_tab = pts_per_segment * SEGMENTS_PER_PIECE
+    tt = np.linspace(0, edge_length, pts_per_tab + 1)
+    null_base_curve = np.vstack((tt, 0 * tt)).T
+    dxy = xy - null_base_curve
+
+    return xy, dxy, knots
