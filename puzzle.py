@@ -3,9 +3,11 @@
 Terminology
 - puzzle - the whole thing
 - puzzle cut - one continuous path, composed of one or more 'puzzle piece edge'
-- base cut - the path followed by 
-- puzzle piece edge - 
-- puzzle piece - a simple connected region, bounded by puzzle piece edges
+- base cut - the smooth underlying path followed by a cut
+- puzzle piece edge - a single part of a cut, with one puzzle piece tab
+- puzzle piece tab - an 'outie' or 'nub'
+- edge segment - one part of an edge, defined between spline knots
+- puzzle piece - a simple connected region, bounded by puzzle piece edges (not explicitly defined in base class here)
 """
 import numpy as np
 import matplotlib.pyplot as plt
@@ -24,7 +26,8 @@ from panda.debug import debug, pm
 
 
 def main():
-    test_puzzle()
+    #test_puzzle()
+    test_square_tiled_puzzle()
 
 @pm
 def test_puzzle():
@@ -40,6 +43,7 @@ def test_puzzle():
     plt.show()
 
 
+@pm
 def test_square_tiled_puzzle():
     size = 1
     cols, rows = 4, 4
@@ -63,6 +67,7 @@ class Puzzle(object):
 
     def __init__(self, piece_dim=None, puzzle_dim=None, cut_type=None,
                  tab_pattern=None, tab_parameters=None):
+        """handle inputs, run top-level generate method"""
 
         self.piece_dim = piece_dim or [1, 1]    # measurement units
         self.puzzle_dim = puzzle_dim or [4, 6]  # puzzle pieces
@@ -70,46 +75,56 @@ class Puzzle(object):
         self.tab_pattern = tab_pattern or 'random'
         self.tab_parameters = tab_parameters or get_default_tab_parameters()
 
-        self.generate_basecuts()
-        self.add_tabs_to_cuts()
+        self.generate_cuts()
 
-    def add_tabs_to_cuts(self):
+    def generate_cuts(self):
+        """subclass entry point. must define three things:
+        - cuts - any internal, simply defined cuts, that have no tabs
+        - cut baselines - internal puzzle piece edge cuts, to have tabs added
+        - perimeter - outer edge of puzzle"""
+        unit_square = np.array([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]])
+        self.perimeter = unit_square * self.piece_dim * self.puzzle_dim
+
         self.cuts = []
-        for base in self.basecuts:
+        self.generate_simple_cuts()
+        self.generate_cut_baselines()
+        self._add_tabs_to_baselines()
+
+    def generate_simple_cuts(self):
+        pass
+
+    def _add_tabs_to_baselines(self):
+        for base in self.baselines:
             self.cuts.append(PuzzleCutter(**base).generate())
 
-    # TODO: change name
-    def generate_basecuts(self):
+    def generate_cut_baselines(self):
         """core method - this defines the shapes of the pieces. must replace in child.
-        this function should use any means to define both:
+        this function should use any means to define:
         - self.baselines - dict containing kwarg inputs for PuzzleCutter
-        - self.perimeter - simple Nx2 path"""
-        # should be able to use 2-point lines to define basecuts
-        self.basecuts = []
+        dict contains:
+        - path - the baseline path of the cut
+        - num_tabs - the number of tabs to add"""
+        self.baselines = []
 
         W, H = self.puzzle_dim
         for n in range(1, H):
             # horizontal cuts run left-right, stack up-down
             hbase = {'path': np.array([[0, n], [W, n]]) * self.piece_dim[0],
-                     'num_pieces': W}
+                     'num_tabs': W}
 
-            self.basecuts.append(hbase)
+            self.baselines.append(hbase)
 
         for n in range(1, W):
             # horizontal cuts run left-right, stack up-down
             vbase = {'path': np.array([[n, 0], [n, H]]) * self.piece_dim[1],
-                     'num_pieces': H}
+                     'num_tabs': H}
 
-            self.basecuts.append(vbase)
-
-        #debug()
-        unit_square = np.array([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]])
-        self.perimeter = unit_square * self.piece_dim * self.puzzle_dim
+            self.baselines.append(vbase)
 
     def plot(self, **kwargs):
         # caller is responsible for plt.show() etc
         ph = []
-        for cut, base in zip(self.cuts, self.basecuts):
+        for cut, base in zip(self.cuts, self.baselines):
             ph.append(plt.plot(cut[:, 0], cut[:, 1], **kwargs))
             ph.append(plt.plot(base['path'][:, 0], base['path'][:, 1], 'r--'))
 
@@ -235,7 +250,7 @@ class SpiralPuzzle(Puzzle):
 # class CurvedPuzzleCut(PuzzleCut):
 # class IrregularStraightPuzzleCut(PuzzleCut):  # non-even piece spacing
 # class IrregularCurvedPuzzleCut(PuzzleCut):    # similar
-# can unify all of these
+# should unify all of these
 
 class PuzzleCutter(object):
     """Accepts a plane curve, and transforms it into a "puzzle cut"
@@ -245,27 +260,19 @@ class PuzzleCutter(object):
     # - 
     # - num_pieces = floor(arclen(curve))  (handled in a core function)
     # - piece positions = equally spaced
-    def __init__(self, path=None, num_pieces=None, positions=None,
+    def __init__(self, path=None, num_tabs=None, positions=None,
                  tab_pattern=None, tab_parameters=None):
         self.path = path if path is not None else np.array([[0, 0], [length, 0]])
         # TODO: consider saving the curve object into this object
         # that might be too much coupling
         self.base_length = curve_length(path)
-        self.num_pieces = num_pieces or np.floor(self.path_length)
-        self.positions = positions or get_monospaced_positions(self.base_length, self.num_pieces)
+        self.num_tabs = num_tabs or np.floor(self.path_length)
+        self.positions = positions or get_monospaced_positions(self.base_length, self.num_tabs)
         self.tab_pattern = tab_pattern or 'random'
         self.tab_parameters = tab_parameters or get_default_tab_parameters()
 
     def generate(self):
-        self.points = add_tabs_to_path(self.path, piece_positions=self.positions)
-        
-        #xy, straight = create_puzzle_cut_curved(self.path,
-        #                                        self.num_pieces,
-        #                                        pts_per_segment,
-        #                                        self.tab_parameters)  # this is not grid-specific
-
-        #self.points = np.vstack(xy)
-        #debug()
+        self.points = add_tabs_to_path(self.path, tab_positions=self.positions)
         return self.points
 
 
@@ -275,29 +282,28 @@ def get_monospaced_positions(L, N):
     return np.arange(0, L, L/N) + L/(2*N)
 
 
-# this could be a class instead, instantiated with path, num_pieces
-# separate a 'calculate' method
-def add_tabs_to_path(path, num_pieces=None, piece_positions=None, tab_pattern=None, tab_parameters=None):
+# could be subsumed into PuzzleCutter ?
+def add_tabs_to_path(path, num_tabs=None, tab_positions=None, tab_pattern=None, tab_parameters=None):
 
     length = curve_length(path)
     pts_per_segment = 25 # TODO find a better place for this - maybe tab_parameters
-    pts_per_piece = pts_per_segment * SEGMENTS_PER_PIECE
+    pts_per_tab = pts_per_segment * SEGMENTS_PER_PIECE
 
     # handle inputs
-    if piece_positions is not None:
-        num_pieces = len(piece_positions)
+    if tab_positions is not None:
+        num_tabs = len(tab_positions)
         # TODO: handle arbitrary positions properly
     else:
-        if num_pieces:
-            piece_positions = get_monospaced_positions(length, num_pieces)
+        if num_tabs:
+            tab_positions = get_monospaced_positions(length, num_tabs)
         else:
-            piece_positions = get_monospaced_positions(length, np.floor(length))
+            tab_positions = get_monospaced_positions(length, np.floor(length))
 
     # interpolate path to match length of piece edge
     #base_curve = path
     # TODO: consider better resampling? interp might have something        
     t = np.linspace(0, 1, len(path))
-    ti = np.linspace(0, 1, pts_per_piece * num_pieces) # TODO double check, off by one
+    ti = np.linspace(0, 1, pts_per_tab * num_tabs) # TODO double check, off by one
     base_curve = np.vstack([np.interp(ti, t, pc) for pc in path.T]).T
 
     #debug()
@@ -308,13 +314,13 @@ def add_tabs_to_path(path, num_pieces=None, piece_positions=None, tab_pattern=No
 
     # this should be incorporated into create_puzzle_piece_edge
     edge_length = 1
-    tt = np.linspace(0, edge_length, pts_per_piece + 1)
+    tt = np.linspace(0, edge_length, pts_per_tab + 1)
     null_base_curve = np.vstack((tt, 0 * tt)).T
 
 
     straights = []
     xy = []
-    for n in range(num_pieces):
+    for n in range(num_tabs):
         # get a piece edge
         tab_parameters.randomize()
         pxy, _ = create_puzzle_piece_edge(tab_parameters, pts_per_segment)
@@ -322,8 +328,8 @@ def add_tabs_to_path(path, num_pieces=None, piece_positions=None, tab_pattern=No
         straights.append(pxy + [n, 0])
 
         # conform it to the current segment of the curve
-        start = pts_per_piece * n
-        end = pts_per_piece * (n + 1) + 1
+        start = pts_per_tab * n
+        end = pts_per_tab * (n + 1) + 1
         base_segment = base_curve[start:end]
         T_segment = T[start:end]
         N_segment = N[start:end]
@@ -346,6 +352,8 @@ def add_tabs_to_path(path, num_pieces=None, piece_positions=None, tab_pattern=No
 # on the edge
 # this could be "fixed" by making the parameterization match for the straight segments
 # NOT by naturalizing the curve parameter<
+
+# should be deprecated
 def create_puzzle_cut_curved(base_curve, num_pieces, pts_per_segment, tab_parameters=None):
     """given a base curve, maps puzzle pieces onto that curve smoothly"""
     # TODO: have this use corrected normal, then can eliminate cut_straight
@@ -475,31 +483,6 @@ class PuzzleGridCutter(object):
 
 
 random_sign = lambda: random.choice([1, -1])
-
-
-# all the below should be deprecated when add_tabs_to_path works
-
-def create_puzzle_cut_straight_irregular(piece_spacing):
-    """variable spacing"""
-    pass
-
-
-def create_puzzle_cut_straight(num_pieces):
-    """generate a cut on a straight baseline, with multiple edges"""
-    # return xy of horizontal cut
-    pset = get_default_tab_parameters()
-    xy = []
-    for n in range(num_pieces):
-        pset.randomize()
-        xy0, _ = create_puzzle_piece_edge(pset)
-        xy0[:, 0] += n
-        xy0[:, 1] *= random_sign()
-        xy.append(xy0)
-
-    return np.vstack(xy)
-
-
-#def create_puzzle_cut_curved(base_curve, num_pieces, pts_per_segment, tab_parameters=None):
 
 
 if __name__ == '__main__':
