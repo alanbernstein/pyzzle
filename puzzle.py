@@ -1,7 +1,4 @@
 #!/usr/bin/python
-"""
-
-"""
 import numpy as np
 import matplotlib.pyplot as plt
 import random
@@ -85,15 +82,8 @@ class Puzzle(object):
         pass
 
     def _add_tabs_to_baselines(self):
-        for base in self.baselines:
-            # ***************************
-            # finish this and refactor is complete, then can move on to new features
-            # somewhere in here is a problem that causes the last sample of a
-            # cut to be omitted
+        for n, base in enumerate(self.baselines):
             self.cuts.append(PuzzleCutter(**base).generate())
-            print('len cut = %d' % len(self.cuts[-1]))
-            print(self.cuts[-1][0::201])
-
 
     def generate_cut_baselines(self):
         """core method - this defines the shapes of the pieces. must replace in child.
@@ -177,8 +167,6 @@ class CurvedBaselineSquarePuzzle(Puzzle):
         pass
 
 
-
-
 class IrregularSquarePuzzle(Puzzle):
     """every piece is composed of several normal grid cells"""
 
@@ -246,13 +234,12 @@ class PuzzleCutter(object):
     # Curved - path=curve
     # IrregularStraight - positions=[...]
     # IrregularCurved - path=curve, positions=[...]
-    
     def __init__(self, path=None, num_tabs=None, positions=None,
                  tab_pattern=None, tab_parameters=None):
-        self.path = path if path is not None else np.array([[0, 0], [length, 0]])
         # TODO: consider saving the curve object into this object
         # that might be too much coupling
         self.base_length = curve_length(path)
+        self.path = path if path is not None else np.array([[0, 0], [self.base_length, 0]])
         self.tab_pattern = tab_pattern or 'random'
         self.tab_parameters = tab_parameters or get_default_tab_parameters()
 
@@ -269,15 +256,15 @@ class PuzzleCutter(object):
                 self.num_tabs = np.floor(self.base_length)
             self.positions = get_monospaced_positions(self.base_length, self.num_tabs)
 
-
     def generate(self):
-        pts_per_segment = 25 # TODO find a better place for this - maybe tab_parameters
+        pts_per_segment = 25  # TODO find a better place for this - maybe tab_parameters
         pts_per_tab = pts_per_segment * SEGMENTS_PER_PIECE
 
-        self.base_curve = resample_curve(self.path, pts_per_tab * self.num_tabs)
+        self.base_curve = resample_curve(self.path, pts_per_tab * self.num_tabs + 1)
         T, N = frenet_frame_2D_corrected(self.base_curve)
 
         xy = []
+        news = []
         for n in range(self.num_tabs):
             # get a piece edge
             self.tab_parameters.randomize()
@@ -296,12 +283,12 @@ class PuzzleCutter(object):
             T_segment = T[start:end]
             N_segment = N[start:end]
             new = add_frenet_offset_2D(base_section, dxy, T_segment, N_segment)
-            # TODO: might need to remove last point or something
-            xy.extend(new)
+            # remove final point, for all but the last segment
+            if n < self.num_tabs - 1:
+                new = new[0:-1, :]
 
-        #cut = np.vstack(xy)
-        #qplot(cut)
-        #debug()
+            news.append(new)
+            xy.extend(new)
 
         self.points = np.vstack(xy)
         return self.points
@@ -312,16 +299,16 @@ def resample_curve(r, new_length):
     M is the second input new_length"""
     # TODO: consider better resampling? interp might have something
     t = np.linspace(0, 1, len(r))
-    ti = np.linspace(0, 1, new_length) # TODO double check, off by one
+    ti = np.linspace(0, 1, new_length)  # TODO double check, off by one
     return np.vstack([np.interp(ti, t, c) for c in r.T]).T
 
 
 def get_monospaced_positions(L, N):
     """center-justified, equally-spaced points
     interval of length L, N points"""
-    return np.arange(0, L, L/N) + L/(2*N)
+    return np.arange(0, L, L / N) + L / (2 * N)
 
-    
+
 # deprecated
 class SquareTiledPuzzle(Puzzle):
     # TODO: this should define baselines:
@@ -375,6 +362,7 @@ class SquareTiledPuzzle(Puzzle):
             print(self.cuts[-1][0::201])
 
 
+        debug()
         unit_square = np.array([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]])
         self.perimeter = unit_square * self.piece_dim * self.puzzle_dim
 
@@ -414,15 +402,13 @@ def create_puzzle_cut_curved(base_curve, num_pieces, pts_per_segment, tab_parame
         N_segment = N[start:end]
 
         new = add_frenet_offset_2D(base_segment, dxy, T_segment, N_segment)
+        print('  piece %d - %d points' % (n, len(new)))
         xy.extend(new)
 
     return np.vstack(xy), np.vstack(straights)
 
-    
-                    
 
 # this should be deprecated when PuzzleCutter is done
-
 class PuzzleGridCutter(object):
     """Generates a single 'puzzle cut'
     by default:
@@ -447,10 +433,6 @@ class PuzzleGridCutter(object):
         elif self.cut_type == 'curved':
             return self.generate_curved()
 
-    # TODO: try to unify these two?
-    # they can probably also bubble up to a parent class.
-    # can't actually use a straight line as the baseline because of undefined
-    # normal vector, so going to have to split it up somehow anyway.
     def generate_curved(self):
         base_curve, t, pts_per_segment = self.quadratic_baseline()  # this is grid-specific
         xy, straight = create_puzzle_cut_curved(base_curve,
