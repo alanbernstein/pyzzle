@@ -19,7 +19,7 @@ def main():
 @pm
 def test_square_tiled_puzzle():
     size = 1
-    cols, rows = 4, 5
+    cols, rows = 1, 2
     puzz = SquareTiledPuzzle(puzzle_dim=(cols, rows),
                              piece_dim=(size, size),
                              cut_type='curved')
@@ -186,7 +186,9 @@ def create_puzzle_cut_curved(base_curve, num_pieces, pts_per_segment, tab_parame
         print('  piece %d - %d points' % (n, len(new)))
         xy.extend(new)
 
-    return np.vstack(xy), np.vstack(straights)
+    pts = np.vstack(xy)
+
+    return pts, np.vstack(straights)
 
 
 random_sign = lambda: random.choice([1, -1])

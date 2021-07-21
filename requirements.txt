@@ -2,3 +2,4 @@
 numpy>=1.11
 # 1.8 supports fill-opacity
 svgwrite>=1.8
+TODO: geometry repo
